@@ -104,13 +104,13 @@ class Model:
         for ind,dt in enumerate(self.X):
             lb=label[ind]
             flg=test_data(dt,rules_dict)
-            if(lb==0):
+            if(lb==1):
                 ill_cnt=ill_cnt+1
 
             if(flg):
                 sat=sat+1
 
-            if(flg and lb==0):
+            if(flg and lb==1):
                 ill_when_sat=ill_when_sat+1
             all_cnt=all_cnt+1
         prob=ill_when_sat/sat
