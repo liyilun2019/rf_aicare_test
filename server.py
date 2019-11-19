@@ -9,9 +9,21 @@ import traceback
 
 from sklearn.externals import joblib
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
 from items import *
 
 import pickle as pk
+
+def load_from_pk(path):
+    with open(path,'rb') as f:
+        ret= pk.load(f)
+    print('load from',path)
+    return ret
+
+def save_to_pk(path,obj):
+    with open(path,'wb') as f:
+        pk.dump(obj,f)
+    print('save to',path)
 
 base_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -38,12 +50,10 @@ def get_trees_rules(rf,data):
         rules=getTreeRule(tree,path,data[0],rules)
     return rules
 
-class Model:
+class Loader():
     def __init__(self,DB_CONN):
-        self.rf = RandomForestClassifier(n_estimators=1000,criterion='gini',max_features='sqrt',max_depth=30,
-            n_jobs=-1)
-        self.column_order=ITEMS_LEARN
-        data,self.label=DB_CONN.getAllLabeledRecord()
+        data,self.label=DB_CONN.getAllLabeledRecord(tbname_yq='chongqing_yunqianjianchabiao_2017',
+        tbname_jj='chongqing_renshenjiejubiao_2017')
         df = pd.DataFrame.from_dict(data)
         df.fillna(value=0, inplace=True)
         df = df.replace(r'\s*', 0, regex=True)
@@ -55,36 +65,28 @@ class Model:
             X.append(tmp)
 
         self.X=X
+        print('loaded',len(self.label))
 
-    def training(self):
-        X,label=self.X,self.label
-        self.rf.fit(X,label)
-        print('trained')
+    def get_18(self,DB_CONN):
+        data,label=DB_CONN.getAllLabeledRecord()
+        df = pd.DataFrame.from_dict(data)
+        df.fillna(value=0, inplace=True)
+        df = df.replace(r'\s*', 0, regex=True)
+        X=[]
+        for ind,d in df.iterrows():
+            tmp=[]
+            for itm in ITEMS_LEARN:
+                tmp.append(d[itm])
+            X.append(tmp)
 
-    def save(self,path):
-        with open(path,'wb') as f:
-            pk.dump(self,f)
+        print('loaded',len(label))
+        return X,label
 
-    def get_importance(self, df):
-        importance_all = np.zeros(self.rf.n_features_)
-        for estimator in self.rf.estimators_:
-            importance = np.zeros(self.rf.n_features_)
-            tree = estimator.tree_
-            path = tree.decision_path(np.float32(df.values)).toarray()
-            for node in np.where(path)[1]:
-                left = tree.children_left[node]
-                right = tree.children_right[node]
-                importance[tree.feature[node]] += (
-                    tree.impurity[node] -
-                    tree.impurity[left] -
-                    tree.impurity[right])
-            importance_all += importance / importance.sum()
-        return importance_all
 
-    def get_rule(self,df):
-        rules=get_trees_rules(self.rf,np.float32(df.values))
-        return rules
-
+class Prob_from_rules():
+    def __init__(self,Loader):
+        self.X=loader.X
+        self.label=loader.label
 
     def get_prob(self,rules_dict):
         def test_data(dt,rules):
@@ -116,7 +118,76 @@ class Model:
         prob=ill_when_sat/sat
         return prob,ill_when_sat,sat,all_cnt,ill_cnt
 
-        
+    def get_prob_bys(self,rules_dict):
+        X=self.X
+        labels=self.label
+        #总样本数
+        all_cnt=len(labels)
+        #不良样本数
+        ill_cnt=0
+        for lb in labels:
+            if(lb == 1):
+                ill_cnt+=1
+        cnt_dict={}
+        ill_cnt_dict={}
+        for ind,dt in enumerate(X):
+            lb=labels[ind]
+            for f,r in rules_dict.items():
+                if(dt[f]>=r[0] and dt[f]<r[1]):
+                    cnt=cnt_dict.get(f,0)
+                    cnt_dict[f]=cnt+1
+                    if(lb==1):
+                        cnt=ill_cnt_dict.get(f,0)
+                        ill_cnt_dict[f]=cnt+1
+
+        p_cnd=1
+        for f,c in ill_cnt_dict.items():
+            p_cnd*=(c+1)/(ill_cnt+2)
+
+        p_ill=ill_cnt/all_cnt 
+
+        p_all=1
+        for f,c in cnt_dict.items():
+            p_all*=(c+1)/(all_cnt+2)
+
+        return p_ill*p_cnd/p_all,p_ill,p_cnd,p_all,ill_cnt_dict,cnt_dict
+
+
+class Model:
+    def __init__(self):
+        self.rf = RandomForestClassifier(n_estimators=1000,criterion='gini',max_features='sqrt',
+            n_jobs=-1,oob_score=True,class_weight='balanced')
+        self.column_order=ITEMS_LEARN
+
+
+    def training(self,loader):
+        X,label=loader.X,loader.label
+        self.rf.fit(X,label)
+        # cvs=cross_val_score(self.rf,X,label,cv=10)
+        # print('cvs =',cvs)
+        print('score=',self.rf.score(X,label))
+        print('oob_score=',self.rf.oob_score_)
+
+    def get_importance(self, df):
+        importance_all = np.zeros(self.rf.n_features_)
+        for estimator in self.rf.estimators_:
+            importance = np.zeros(self.rf.n_features_)
+            tree = estimator.tree_
+            path = tree.decision_path(np.float32(df.values)).toarray()
+            for node in np.where(path)[1]:
+                left = tree.children_left[node]
+                right = tree.children_right[node]
+                importance[tree.feature[node]] += (
+                    tree.impurity[node] -
+                    tree.impurity[left] -
+                    tree.impurity[right])
+            importance_all += importance / importance.sum()
+        return importance_all
+
+    def get_rule(self,df):
+        rules=get_trees_rules(self.rf,np.float32(df.values))
+        return rules
+
 
     def predict(self,df):
         df = pd.DataFrame.from_dict([df])
@@ -159,11 +230,18 @@ def test_data(dt,rules):
     return True
 
 if __name__=="__main__":
-    model=Model(DB_CONN)
-    model.training()
-    model.save('rf.pk')
-    with open('rf.pk','rb') as f:
-        model=pk.load(f)
+    loader=Loader(DB_CONN)
+    save_to_pk('loader.pk',loader)
+    loader=load_from_pk('loader.pk')
+    
+    model=Model()
+    model.training(loader)
+    save_to_pk('rf.pk',model)
+    model=load_from_pk('rf.pk')
+    
+    prober=Prob_from_rules(loader)
+    data_18,label_18=loader.get_18(DB_CONN)
+    print('test score=',model.rf.score(data_18,label_18))
 
     tables=[
     'beijing_yunqianjianchabiao_2017',
@@ -189,7 +267,7 @@ if __name__=="__main__":
     table=tables[0]
     ok=0
     err=0
-    for record,label in DB_CONN.getEnumerateRecord(table):
+    for record,label in DB_CONN.getEnumerateRecord():
         r,rules,importance,predicted=model.predict(record)
         # lis.append(r)
         # if r>0.5 and label==0 or r<0.5 and label==1:
@@ -201,9 +279,10 @@ if __name__=="__main__":
         #     ok=ok+1
         rule_list={}
         ind=0
+        print(r,label,predicted)
         for f,val in importance:
             rule_list[f]=rules.get(f,(-10000,10000))
-            print(model.get_prob(rule_list),r,label,predicted)
+            print(prober.get_prob_bys(rule_list))
             ind=ind+1
             if(ind>=10):
                 break

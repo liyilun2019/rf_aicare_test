@@ -48,7 +48,8 @@ class Record_DB():
                 ret[itm]=r[ind]
             return ret
 
-    def getEnumerateRecord(self,tbname_yq='beijing_yunqianjianchabiao_2017',tbname_jj='beijing_renshenjiejubiao_2017'):
+    def getEnumerateRecord(self,tbname_yq='beijing_yunqianjianchabiao_2018',
+        tbname_jj='beijing_renshenjiejubiao_2018'):
         table_vars=''
         for ind,i in enumerate(items):
             table_vars+=f'IFNULL(a.{i},0)'
@@ -86,7 +87,8 @@ class Record_DB():
             r=self.cursor.fetchone()
 
 
-    def getAllLabeledRecord(self,tbname_yq='beijing_yunqianjianchabiao_2017',tbname_jj='beijing_renshenjiejubiao_2017'):
+    def getAllLabeledRecord(self,tbname_yq='beijing_yunqianjianchabiao_2017',
+        tbname_jj='beijing_renshenjiejubiao_2017'):
         table_vars=''
         for ind,i in enumerate(items):
             table_vars+=f'IFNULL(a.{i},0)'
@@ -104,7 +106,7 @@ class Record_DB():
             if not (ind == len(jjtable_items)-1):
                 jjtable_sum+='+'
 
-        self.cursor.execute(f"select {table_vars},{jjtable_vars},{jjtable_sum} from {tbname_yq} a join {tbname_jj} b on a.archive_code=b.archive_code limit 10000;")
+        self.cursor.execute(f"select {table_vars},{jjtable_vars},{jjtable_sum} from {tbname_yq} a join {tbname_jj} b on a.archive_code=b.archive_code;")
         r=self.cursor.fetchone()
         X=[]
         y=[]
